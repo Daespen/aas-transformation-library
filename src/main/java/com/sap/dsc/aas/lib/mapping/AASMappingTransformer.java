@@ -27,12 +27,14 @@ import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.sap.dsc.aas.lib.expressions.Expression;
+import com.sap.dsc.aas.lib.mapping.model.Header;
 import com.sap.dsc.aas.lib.mapping.model.MappingSpecification;
 import com.sap.dsc.aas.lib.mapping.model.Template;
 
 import io.adminshell.aas.v3.dataformat.core.ReflectionHelper;
 import io.adminshell.aas.v3.dataformat.json.JsonDeserializer;
 import io.adminshell.aas.v3.model.AssetAdministrationShellEnvironment;
+import io.adminshell.aas.v3.model.LangString;
 
 public class AASMappingTransformer {
 
@@ -43,8 +45,22 @@ public class AASMappingTransformer {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
+	/**
+	 * Transforms a Template based AssetAdministrationShellEnvironment to a pure
+	 * AssetAdministrationShellEnvironment
+	 * 
+	 * @param mappingSpec        MappingSpecification containing a complete
+	 *                           AssetAdministrationShellEnvironment in which all
+	 *                           AAS Objects might implement the Template Interface
+	 * @param initialContextItem Object which might provide a data context to
+	 *                           extract data and transform it into the
+	 *                           AssetAdministrationShellEnvironment using Template
+	 *                           logic
+	 * @return AssetAdministrationShellEnvironment which is the transformation
+	 *         result of the Template based attributes
+	 */
 	public AssetAdministrationShellEnvironment transform(MappingSpecification mappingSpec, Object initialContextItem) {
-		TransformationContext initialCtx = TransformationContext.buildContext(null, initialContextItem, null);
+		TransformationContext initialCtx = createInitialContext(initialContextItem, mappingSpec.getHeader());
 		AssetAdministrationShellEnvironment aasEnvTemplate = mappingSpec.getAasEnvironmentMapping();
 		if (mappingSpec.getAasEnvironmentMapping() instanceof Template
 				&& ((Template) mappingSpec.getAasEnvironmentMapping()).getForeachExpression() != null) {
@@ -52,6 +68,10 @@ public class AASMappingTransformer {
 					"@forEach expression on top level AAS Environment is not applicable. Only one AAS Environments will be returned!");
 		}
 		return (AssetAdministrationShellEnvironment) asList(transformAny(aasEnvTemplate, initialCtx)).get(0);
+	}
+
+	private TransformationContext createInitialContext(Object initialContextItem, Header header) {
+		return TransformationContext.buildContext(null, initialContextItem, header);
 	}
 
 	private List<? extends Object> inflateTemplate(Template template, TransformationContext parentCtx) {
@@ -84,7 +104,7 @@ public class AASMappingTransformer {
 		try {
 			transformProperties(template, ctx, transformedEntity);
 		} catch (NoSuchMethodException | SecurityException | IntrospectionException | IllegalAccessException
-				| IllegalArgumentException | InvocationTargetException e) {
+				| InvocationTargetException e) {
 			LOGGER.error("Failed to transform properties for " + transformedEntity.getClass().getName(), e);
 		}
 		return transformedEntity.instance;
@@ -211,12 +231,18 @@ public class AASMappingTransformer {
 	}
 
 	private Class<?> getAASInterface(Object obj) {
+		if (obj instanceof LangString) {
+			return LangString.class;
+		}
 		return ReflectionHelper.getAasInterface(obj.getClass());
 	}
 
 	private Object newDefaultAASInstance(Class<?> aasInterface) {
 		Class<?> defaultImplementation = ReflectionHelper.getDefaultImplementation(aasInterface);
 		try {
+			if (defaultImplementation == null && aasInterface.isAssignableFrom(LangString.class)) {
+				return LangString.class.getConstructor().newInstance();
+			}
 			return defaultImplementation.getConstructor().newInstance();
 		} catch (InstantiationException | IllegalAccessException | IllegalArgumentException | InvocationTargetException
 				| NoSuchMethodException | SecurityException e) {
